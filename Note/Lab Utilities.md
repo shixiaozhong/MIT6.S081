@@ -4,7 +4,9 @@
 
 [primes (<font color="blue">moderate</font>>)/(<font color="red">hard</font>)](#primes (<font color="blue">moderate</font>>)/(<font color="red">hard</font>))
 
-[find (<font color="blue">moderate</font>)](#find (<font color="blue">moderate</font>))
+[find (<font color="blue">moderate</font>)](#find (<font color="blue">moderate</font>) )
+
+[xargs<font color="blue">(moderate)</font>](#xargs (<font color="blue">moderate</font>))
 
 #### sleep(<font color="green">easy</font>)
 
@@ -266,3 +268,212 @@ int main()
 * 你需要使用C的字符串，看一下K&RC语言书籍。
 * 注意`==`并不是像python一样判断字符串，使用`strcmp`代替。
 * 将程序加入到Makefile中的UPROGS。
+
+分析ls程序
+
+```c
+// ls.c
+
+#include "kernel/types.h"
+#include "kernel/stat.h"
+#include "user/user.h"
+#include "kernel/fs.h"
+
+char *
+fmtname(char *path)
+{
+  static char buf[DIRSIZ + 1];
+  char *p;
+
+  // Find first character after last slash.
+  for (p = path + strlen(path); p >= path && *p != '/'; p--)	// 从后往前找第一个分隔符
+    ;
+  p++;	// p++以后p指向的就是路径中最后一个文件的名称的首地址
+
+  // Return blank-padded name.
+  if (strlen(p) >= DIRSIZ)	// 如果最后一个文件的长度超过目录长度的最大值，直接返回p
+    return p;
+  memmove(buf, p, strlen(p));	// 否则将最后一个文件名拷贝到buf中，此时buf中只存储了一个文件名
+  memset(buf + strlen(p), ' ', DIRSIZ - strlen(p));	//将文件的长度补为DIRSIZ，后面补空格，主要目的是保证打印对齐
+  return buf;
+}
+
+void ls(char *path)
+{
+  char buf[512], *p;
+  int fd;				// 当前文件描述符
+  struct dirent de;		// 存储文件索引和名称
+  struct stat st;		// 保存文件描述信息
+
+  if ((fd = open(path, 0)) < 0)		// 打开文件
+  {
+    fprintf(2, "ls: cannot open %s\n", path);
+    return;
+  }
+
+  if (fstat(fd, &st) < 0)	// 获取文件状态
+  {
+    fprintf(2, "ls: cannot stat %s\n", path);
+    close(fd);
+    return;
+  }
+
+  switch (st.type)	// 判断文件状态
+  {
+  case T_DEVICE:
+  case T_FILE:		// 是文件
+    printf("%s %d %d %l\n", fmtname(path), st.type, st.ino, st.size);
+    break;
+
+  case T_DIR:		// 是目录
+    if (strlen(path) + 1 + DIRSIZ + 1 > sizeof buf)	// 路径长度超过buf
+    {
+      printf("ls: path too long\n");
+      break;
+    }
+    strcpy(buf, path);
+    p = buf + strlen(buf);
+    *p++ = '/';				// p存储文件路径，且最后一位置为分隔符/
+    while (read(fd, &de, sizeof(de)) == sizeof(de))	// 读取每一个文件
+    {
+      if (de.inum == 0)
+        continue;
+      memmove(p, de.name, DIRSIZ);		// memmove函数将目录名和路径连接起来
+      p[DIRSIZ] = 0;					// 最后一位置0
+      if (stat(buf, &st) < 0)			// 获取遍历文件的状态
+      {
+        printf("ls: cannot stat %s\n", buf);
+        continue;
+      }
+      printf("%s %d %d %d\n", fmtname(buf), st.type, st.ino, st.size);	// 打印文件状态
+    }
+    break;
+  }
+  close(fd);
+}
+
+int main(int argc, char *argv[])
+{
+  int i;
+
+  if (argc < 2)
+  {
+    ls(".");	// 如果只输入一个ls，就去ls当前目录
+    exit(0);
+  }
+  for (i = 1; i < argc; i++)
+    ls(argv[i]);	// 否则ls每一个参数
+  exit(0);
+}
+
+```
+
+```c
+// find.c
+
+#include "kernel/types.h"
+#include "kernel/stat.h"
+#include "user/user.h"
+#include "kernel/fs.h"
+
+void find(char *path, char *file)
+{
+    // fprintf(1, "路径：%s\n", path);
+    struct stat st;
+    int fd;
+    if ((fd = open(path, 0)) < 0) // 打开当前文件
+    {
+        fprintf(2, "find: cannot open %s\n", path);
+        return;
+    }
+    if (fstat(fd, &st) < 0) //获取当前文件状态
+    {
+        fprintf(2, "ls: cannot stat %s\n", path);
+        close(fd);
+        return;
+    }
+    if (st.type == T_DIR) // 是目录
+    {
+        char buf[512]; // 储存文件路径
+        strcpy(buf, path);
+        char *p = buf + strlen(buf);
+        *p++ = '/'; // 将路径中最后的0覆盖，且置为路径分隔符
+        struct dirent dir_dt;
+        while (read(fd, &dir_dt, sizeof(dir_dt)) == sizeof(dir_dt)) // 遍历每一个文件
+        {
+            if (dir_dt.inum == 0)
+                continue;
+            if (strcmp(dir_dt.name, ".") == 0 || strcmp(dir_dt.name, "..") == 0) // 不要递归.和..
+                continue;
+            strcpy(p, dir_dt.name); //连接文件名，构成新路径
+            find(buf, file);        // 继续寻找
+        }
+    }
+    else if (st.type == T_FILE) // 是文件
+    {
+        // 取最后一个文件的名称
+        char *p;
+        for (p = path + strlen(path); p >= path && *p != '/'; p--)
+            ;
+        p++;
+        if (strcmp(p, file) == 0) // 判断相等，是就将路径打印
+            fprintf(1, "%s\n", path);
+    }
+    close(fd); // 关闭文件描述符
+}
+
+int main(int argc, char *argv[])
+{
+    if (argc < 3)
+    {
+        fprintf(1, "Usge find directory-name file-name\n");
+        exit(1);
+    }
+    find(argv[1], argv[2]);
+    exit(0);
+}
+```
+
+![image-20221104124939476](http://shixiaozhong.oss-cn-hangzhou.aliyuncs.com/img/image-20221104124939476.png)
+
+---
+
+#### xargs (<font color="blue">moderate</font>)
+
+**要求**
+
+> Write a simple version of the UNIX xargs program: its arguments describe a command to run, it reads lines from the standard input, and it runs the command for each line, appending the line to the command's arguments. Your solution should be in the file `user/xargs.c`.
+>
+> 写一个简单版本的UNIX xargs程序：它的参数描述了一个需要运行的命令，它从标准输出中读取行，并且它为每一行运行命令，将该行追加到命令的参数。你的答案应该放在`user/xargs.c`文件中。
+
+下面的例子说明了 xarg 的行为:
+
+![image-20221104222839937](http://shixiaozhong.oss-cn-hangzhou.aliyuncs.com/img/image-20221104222839937.png)
+
+注意，这里的命令是“ echo bye”，附加参数是“ hello too”，使用“ echo bye hello too”命令，输出“ bye hello too”。
+
+请注意，UNIX 上的 xargs 进行了一次优化，它将在一个时间内向命令提供多于参数的信息。我们不期望你做这个优化，让 UNIX 上的 xargs 按照我们希望的方式运行。请将-n 选项设置为1运行它。比如说：
+
+![image-20221104223142242](http://shixiaozhong.oss-cn-hangzhou.aliyuncs.com/img/image-20221104223142242.png)
+
+**一些提示**
+
+* 使用 fork 和 exec 在每行输入中调用命令，在父进程中使用 wait 等待子进程完成命令。
+* 若要读取单个输入行，请一次读取一个字符，直到出现换行符('\n')。
+* 在`kernel/param.h`中声明了MAXARG，如果需要声明 argv 数组，它可能很有用。
+* 将程序加入到Makefile中的UPROGS。
+* 文件系统的更改在 qemu 运行期间保持不变，为了得到一个干净的文件系统，先执行`make clean`，然后执行`make qemu`
+
+Xargs、 find 和 grep 组合得很好:
+
+![image-20221104223626186](http://shixiaozhong.oss-cn-hangzhou.aliyuncs.com/img/image-20221104223626186.png)
+
+将对下面目录中名为 b 的每个文件运行“ grep hello”。
+
+**测试**
+
+为了测试你的 Xargs 答案,运行 shell 脚本 xargstest.sh。如果您的解决方案产生以下输出，则该解决方案是正确的:
+
+![image-20221104223747831](http://shixiaozhong.oss-cn-hangzhou.aliyuncs.com/img/image-20221104223747831.png)
+
+您可能必须返回并修复 find 程序中的 bug。输出中有许多`$`，因为 xv6 shell 没有意识到它是从一个文件而不是从控制台处理命令,为文件中的每个命令打印 $。
