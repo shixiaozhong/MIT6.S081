@@ -4,9 +4,9 @@
 
 [primes (<font color="blue">moderate</font>>)/(<font color="red">hard</font>)](#primes (<font color="blue">moderate</font>>)/(<font color="red">hard</font>))
 
-[find (<font color="blue">moderate</font>)](#find (<font color="blue">moderate</font>) )
+[find (<font color="blue">moderate</font>)](#find (<font color="blue">moderate</font>))
 
-[xargs<font color="blue">(moderate)</font>](#xargs (<font color="blue">moderate</font>))
+[xargs (<font color="blue">moderate</font>)](#xargs (<font color="blue">moderate</font>))
 
 #### sleep(<font color="green">easy</font>)
 
@@ -34,6 +34,10 @@
 
 通过`make grade`来测试代码正确性，但是`make grade`会跑所有的测试，如果只需要跑一个任务的测试可以使用`$ ./grade-lab-util sleep`来测试sleep的代码正确性。或者使用`$ make GRADEFLAGS=sleep grade`来进行测试。
 
+**思路**
+
+这个就是实现一个sleep的命令，直接调用系统自带的sleep函数就可以。
+
 ```c
 // sleep.c
 
@@ -49,17 +53,8 @@ int main(int argc, char *argv[])
         fprintf(1, "Usage: sleep seconds...\n");
         exit(1);
     }
-    // 判断输入的数字不能为负数
-    if (*argv[1] != '-')
-    {
-        int n = atoi(argv[1]); // 字符串转化为数字
-        sleep(n);              // 调用系统调用函数sleep
-    }
-    else
-    {
-        fprintf(1, "seconds must be positive\n"); // 输入的数字不是正数就饿给提示
-        exit(2);
-    }
+    int n = atoi(argv[1]);	// 将字符串转换为数字
+    sleep(n);	// 执行内置的系统调用进行sleep
     exit(0);
 }
 ```
@@ -89,9 +84,11 @@ int main(int argc, char *argv[])
 
 ![image-20221102085134258](http://shixiaozhong.oss-cn-hangzhou.aliyuncs.com/img/image-20221102085134258.png)
 
-```c
-//pingpong.c
+**思路**
 
+实现pingpong命令，本质就是通过管道来实现进程之间的通信，由于管道是半双工，不能同时发，并且是单向通信，所以需要用一对，两个管道来完成通信，一个负责读，一个负责写。
+
+```c
 #include "kernel/types.h"
 #include "kernel/stat.h"
 #include "user/user.h"
@@ -111,26 +108,27 @@ int main(int argc, char *argv[])
 
         char buf[4];
         read(p2[0], buf, sizeof(buf)); // 从pipe2中读数据
-        fprintf(1, "%d: received ping\n", getpid());
-
-        write(p1[1], buf, sizeof(buf)); // 往pipe1中写数据
+        fprintf(1, "%d: received %s\n", getpid(), buf);
+        char s[5] = "pong";
+        write(p1[1], s, sizeof(buf)); // 往pipe1中写数据
         exit(1);
     }
     else if (pid > 0)
     {
         // parent process
-        char s[4] = "hhh";
+        char s[5] = "ping";
         write(p2[1], s, 4); // 往pipe2中写数据, 在等待之前写数据，如果在等待之后写，就会导致子进程一直等待读数据
                             // 如果没有数据可以读，读端进程会被挂起，知道有数据可以读
         int status;
         pid = wait(&status); // wait child，阻塞式的等待
+
         // 父进程从pipe1读，从pipe2写
         close(p1[1]); // 关闭pipe1写端
         close(p2[0]); // 关闭pipe2读端
 
         char buf[4];
         read(p1[0], buf, sizeof(buf)); // 从pipe1中读数据
-        fprintf(1, "%d: received pong\n", getpid());
+        fprintf(1, "%d: received %s\n", getpid(), buf);
     }
     else
     {
@@ -174,6 +172,16 @@ int main(int argc, char *argv[])
 
 <img src="http://shixiaozhong.oss-cn-hangzhou.aliyuncs.com/img/image-20221102162822444.png" alt="image-20221102162822444"  />
 
+**思路**
+
+可以先去看看那篇文章，文章中的图就提供了思路来实现，这个素数筛的实现应该是最难，应该也是最有意思的一个实现。
+
+![image-20221113212115496](http://shixiaozhong.oss-cn-hangzhou.aliyuncs.com/img/image-20221113212115496.png)
+
+文章中的思路已经很明显了，找到第一个素数2，将其打印，然后将所有是2倍数的数全部筛掉，然后继续下一个，第一个素数为3，同同样的打印，然后将所有的3的倍数的数全部筛掉，一直往后操作，直到没有数字的为止。
+
+思路有了，怎么实现呢？提示中也有，就是通过子进程来完成筛的动作，并且进程之间还要有通信，因为需要传递数据。所以还需要用到管道，但是可以注意到只需要从父进程读取数据，不需要写入，所以只需要一个管道就可以完成工作。
+
 ```c
 // primes.c
 
@@ -206,7 +214,7 @@ void prime_sieve(int *p_left)
         int p;
         while (read(p_left[0], &p, sizeof(p))) // 从管道中将父进程写入的数据读出来,最后一个标志位舍去
         {
-            // 读到标志位后break
+            // 读到标志位后写入，然后break
             if (p == -1)
             {
                 write(p_right[1], &p, sizeof(p)); // 将标志位写入
@@ -215,7 +223,7 @@ void prime_sieve(int *p_left)
             // 判断是否可以被整除，可以代表一定不是素数
             if (p % q != 0)
             {
-                write(p_right[1], &p, sizeof(p)); // 写入到与子进程通信的管道中，让子进程继续筛选
+                write(p_right[1], &p, sizeof(p)); // 不可以被整除的写入到与子进程通信的管道中，让子进程继续筛选
             }
         }
         wait(0);          // 等待子进程退出
@@ -240,7 +248,7 @@ int main()
         for (int i = 2; i < 36; i++)
             write(p[1], &i, sizeof(i)); // 将2-35全部读入到管道中
         int flag = -1;
-        write(p[1], &flag, sizeof(flag)); // 设置一个标志位，标志数据最后一位
+        write(p[1], &flag, sizeof(flag)); // 设置一个标志位，标志有效数据结束
         wait(0);                          // 等待子进程退出
     }
     exit(0);
@@ -269,7 +277,9 @@ int main()
 * 注意`==`并不是像python一样判断字符串，使用`strcmp`代替。
 * 将程序加入到Makefile中的UPROGS。
 
-分析ls程序
+**思路**
+
+find的查找思路还是比较简单的，就是查看文件，如果待查找的是文件，直接判断，如果是目录就去目录中的每一个文件中去查找，所以可以想到用递归来完成查找。但是细节比较多，比如如何读取目录下的每一个文件名，查看文件状态，可以按照提示去查看`user/ls.c`是如何进行的，还有一些字符串的连接和判断，对指针的应用还是比较麻烦的。
 
 ```c
 // ls.c
@@ -379,7 +389,7 @@ int main(int argc, char *argv[])
 void find(char *path, char *file)
 {
     // fprintf(1, "路径：%s\n", path);
-    struct stat st;
+    struct stat st; // 存储文件描述信息
     int fd;
     if ((fd = open(path, 0)) < 0) // 打开当前文件
     {
@@ -392,30 +402,30 @@ void find(char *path, char *file)
         close(fd);
         return;
     }
-    if (st.type == T_DIR) // 是目录
+    if (st.type == T_DIR) // 是目录，继续向下搜索
     {
-        char buf[512]; // 储存文件路径
+        char buf[512]; // 储存文件路径，假设最长不超过512字节
         strcpy(buf, path);
         char *p = buf + strlen(buf);
-        *p++ = '/'; // 将路径中最后的0覆盖，且置为路径分隔符
-        struct dirent dir_dt;
+        *p++ = '/';                                                 // 将路径中最后的0覆盖，且置为路径分隔符
+        struct dirent dir_dt;                                       // 存储目录下的文件名和编号
         while (read(fd, &dir_dt, sizeof(dir_dt)) == sizeof(dir_dt)) // 遍历每一个文件
         {
             if (dir_dt.inum == 0)
                 continue;
             if (strcmp(dir_dt.name, ".") == 0 || strcmp(dir_dt.name, "..") == 0) // 不要递归.和..
                 continue;
-            strcpy(p, dir_dt.name); //连接文件名，构成新路径
+            strcpy(p, dir_dt.name); // 连接文件名，构成新路径
             find(buf, file);        // 继续寻找
         }
     }
-    else if (st.type == T_FILE) // 是文件
+    else if (st.type == T_FILE) // 是文件，直接判断是不是需要查找的文件名
     {
-        // 取最后一个文件的名称
+        // 从路径中取最后一个文件的名称
         char *p;
         for (p = path + strlen(path); p >= path && *p != '/'; p--)
             ;
-        p++;
+        p++;                      // 使p指向文件名的首地址
         if (strcmp(p, file) == 0) // 判断相等，是就将路径打印
             fprintf(1, "%s\n", path);
     }
@@ -429,7 +439,7 @@ int main(int argc, char *argv[])
         fprintf(1, "Usge find directory-name file-name\n");
         exit(1);
     }
-    find(argv[1], argv[2]);
+    find(argv[1], argv[2]); // 参数为目录名和文件名
     exit(0);
 }
 ```
@@ -444,7 +454,7 @@ int main(int argc, char *argv[])
 
 > Write a simple version of the UNIX xargs program: its arguments describe a command to run, it reads lines from the standard input, and it runs the command for each line, appending the line to the command's arguments. Your solution should be in the file `user/xargs.c`.
 >
-> 写一个简单版本的UNIX xargs程序：它的参数描述了一个需要运行的命令，它从标准输出中读取行，并且它为每一行运行命令，将该行追加到命令的参数。你的答案应该放在`user/xargs.c`文件中。
+> 写一个简单版本的UNIX xargs程序：它的参数描述了一个需要运行的命令，它从标准输入中读取行，并且它为每一行运行命令，将该行追加到命令的参数。你的答案应该放在`user/xargs.c`文件中。
 
 下面的例子说明了 xarg 的行为:
 
@@ -472,8 +482,134 @@ Xargs、 find 和 grep 组合得很好:
 
 **测试**
 
-为了测试你的 Xargs 答案,运行 shell 脚本 xargstest.sh。如果您的解决方案产生以下输出，则该解决方案是正确的:
+为了测试你的xargs 答案,运行 shell 脚本 xargstest.sh。如果您的解决方案产生以下输出，则该解决方案是正确的:
 
 ![image-20221104223747831](http://shixiaozhong.oss-cn-hangzhou.aliyuncs.com/img/image-20221104223747831.png)
 
-您可能必须返回并修复 find 程序中的 bug。输出中有许多`$`，因为 xv6 shell 没有意识到它是从一个文件而不是从控制台处理命令,为文件中的每个命令打印 $。
+您可能必须返回并修复 find 程序中的 bug。输出中有许多`$`，因为 xv6 shell 没有意识到它是从一个文件而不是从控制台处理命令,为文件中的每个命令打印 $。(这个bug暂时不考虑)
+
+**思路**
+
+xargs的作用就是从标准输入流中读取数据，并将其转化为后面指令的命令行参数。只需要从stdin中读出数据，直接作为后面指令的参数就可以了，然后创建一个子进程套exec函数。有一个细节需要注意，就是因为管道两边的两条指令都是同时执行的，所以需要关注到先后的问题，存在前面的数据还没有得到，xargs就直接开始运行的可能。下面写了两种写法，第一种是读一次，使用sleep显示等待，第二种是一次读一个字符，一直读。我也试过一直读一个buf数组的做法，但是不知道为啥不成功。
+
+```c
+#include "kernel/types.h"
+#include "kernel/stat.h"
+#include "user/user.h"
+
+int main(int argc, char *argv[])
+{
+    sleep(2);	// 等待前面的命令先执行完，可以使用sleep
+    
+    char buf[1024]; // 存储从标准输入流读出的字符串
+    char *xargv[16];	// 作为exec的第二个参数
+    int xargc = 0;
+    // 将argv的所有参数存储到xargv中，作为后续调用exec使用
+    for (int i = 1; i < argc; i++)
+        xargv[xargc++] = argv[i];
+    
+    char *p = buf; // p指向buf首地址
+    read(0, buf, sizeof(buf));	// 从标准输入中读取数据到buf数组，只读一次
+    for (int i = 0; i < sizeof(buf); i++)
+    {
+        if (buf[i] == '\n')	// 读到换行符代表一次读入已经结束
+        {
+            int pid = fork();
+            if (pid == 0)
+            {
+                // child process
+                // 将buf的参数加到xargv中
+                buf[i] = '\0';         // 将'\n'转换为'\0'，便于连接
+                xargv[xargc++] = p;    // 进行连接
+                xargv[xargc++] = '\0'; // 标识结束
+                exec(xargv[0], xargv);
+            }
+            else if (pid > 0)
+            {
+                // parent process
+                wait(0);
+                p = buf + i + 1; // p指向新的buf位置
+            }
+            else
+            {
+                // fork error
+                fprintf(1, "fork error\n");
+                exit(1);
+            }
+        }
+    }
+    exit(0);
+}
+```
+
+```c
+// xargs.c
+
+#include "kernel/types.h"
+#include "kernel/stat.h"
+#include "user/user.h"
+
+int main(int argc, char *argv[])
+{
+    char buf[1024]; // 存储从标准输入流读出字符串
+    char *xargv[16];
+    int xargc = 0;
+    // 将argv的所有参数存储到xargv中，作为后续调用exec使用
+    for (int i = 1; i < argc; i++)
+        xargv[xargc++] = argv[i];
+    char *p = buf; // p指向buf首地址
+    char c;
+    int cnt = 0;
+    while (read(0, &c, sizeof(c)) > 0) // 一次读取一个字符,读多次
+    {
+        if (c == '\n')
+        {
+            int pid = fork();
+            if (pid == 0)
+            {
+                // child process
+                // 将buf的参数加到xargv中
+                xargv[xargc++] = p;    // 进行连接
+                xargv[xargc++] = '\0'; // 标识结束
+                exec(xargv[0], xargv);
+            }
+            else if (pid > 0)
+            {
+                // parent process
+                wait(0);
+                p = buf + cnt + 1; // p指向新的buf位置
+            }
+            else
+            {
+                // fork error
+                fprintf(1, "fork error\n");
+                exit(1);
+            }
+        }
+        else
+        {
+            buf[cnt++] = c; // 将c保存到buf数组
+        }
+    }
+    exit(0);
+}
+```
+
+
+
+![image-20221111154955231](http://shixiaozhong.oss-cn-hangzhou.aliyuncs.com/img/image-20221111154955231.png)
+
+---
+
+#### 总结
+
+写一个对这个实验的总结吧，这个lab是最开始的一个lab，居然可以自己来实现shell下的命令，当时觉得非常的酷。看完了课程要求的资料就立刻开始了实验，第一个sleep是非常简单的，轻松拿下了，也给了我很大的自信。接下来的pingpong也没有很大的问题，因为开始忘了管道的内容，去网上找了几篇博客看了一下，就做出来了，也非常高兴。但是开始了后面的primes，就有点懵了，看了那张图以后也知道思路了，但是怎么实现成了问题，刚开始是想的循环，创建一批子进程啥的，想着想着不太对劲了，怎么传递数据呢？管道只能父子进程啊。兄弟进程怎么实现呢？然后就懵了，最后去看了一下网上提供的思路用递归才知道，这个应该不难想到啊，可能是太久没刷算法题了吧。后来继续find，这个find花了我最多的时间了，思路是不是很难的，但是写代码加调试，搞了很久才出来，还是因为递归的不熟练导致的，所以一定算法不能停。最后就是这个xargs了，这个其实是不难的，但是太菜了，也花费了不少时间，只需要简单的提取数据就可以。总时长记不清了，断断续续做的，估计得有十几个小时吧，主要写c语言的功底太差了。
+
+最后执行`make grade`命令来完成总的测试，还需要创建一个time.txt文件，记录自己在这个lab上花费的时间。否则就只有99分。
+
+![image-20221113222405352](http://shixiaozhong.oss-cn-hangzhou.aliyuncs.com/img/image-20221113222405352.png)
+
+创建一个time.txt文件以后。
+
+![image-20221111220932215](http://shixiaozhong.oss-cn-hangzhou.aliyuncs.com/img/image-20221111220932215.png)
+
