@@ -1,12 +1,14 @@
-[sleep(<font color="green">easy</font>)](#sleep(<font color="green">easy</font>))
+[sleep(<font color="green">easy</font>)](#sleepeasy)
 
-[pingpong(<font color="green">easy</font>)](#pingpong(<font color="green">easy</font>))
+[pingpong(<font color="green">easy</font>)](#pingpongeasy)
 
-[primes (<font color="blue">moderate</font>>)/(<font color="red">hard</font>)](#primes (<font color="blue">moderate</font>>)/(<font color="red">hard</font>))
+[primes (<font color="blue">moderate</font>>)/(<font color="red">hard</font>)](#primes-moderatehard)
 
-[find (<font color="blue">moderate</font>)](#find (<font color="blue">moderate</font>))
+[find (<font color="blue">moderate</font>)](#find-moderate)
 
-[xargs (<font color="blue">moderate</font>)](#xargs (<font color="blue">moderate</font>))
+[xargs (<font color="blue">moderate</font>)](#xargs-moderate)
+
+[总结](#总结)
 
 #### sleep(<font color="green">easy</font>)
 
@@ -499,27 +501,34 @@ xargs的作用就是从标准输入流中读取数据，并将其转化为后面
 
 int main(int argc, char *argv[])
 {
-    sleep(2);	// 等待前面的命令先执行完，可以使用sleep
-    
-    char buf[1024]; // 存储从标准输入流读出的字符串
-    char *xargv[16];	// 作为exec的第二个参数
+    sleep(2);        // 等待前面的命令先执行完，可以使用sleep
+    char *xargv[16]; // 作为exec的第二个参数
     int xargc = 0;
-    // 将argv的所有参数存储到xargv中，作为后续调用exec使用
-    for (int i = 1; i < argc; i++)
-        xargv[xargc++] = argv[i];
-    
-    char *p = buf; // p指向buf首地址
-    read(0, buf, sizeof(buf));	// 从标准输入中读取数据到buf数组，只读一次
+    char buf[1024];            // 存储从标准输入流读出的字符串
+    char *p = buf;             // p指向buf首地址
+    read(0, buf, sizeof(buf)); // 从标准输入中读取数据到buf数组，只读一次
+
+    if (strcmp(argv[1], "-n") == 0)	//处理xargs带参数的情况
+    {
+        for (int i = 3; i < argc; i++)
+            xargv[xargc++] = argv[i];
+    }
+    else
+    {
+        // 将argv的所有参数存储到xargv中，作为后续调用exec使用
+        for (int i = 1; i < argc; i++)
+            xargv[xargc++] = argv[i];
+    }
     for (int i = 0; i < sizeof(buf); i++)
     {
-        if (buf[i] == '\n')	// 读到换行符代表一次读入已经结束
+        if (buf[i] == '\n') // 读到换行符代表一次读入已经结束
         {
             int pid = fork();
             if (pid == 0)
             {
                 // child process
                 // 将buf的参数加到xargv中
-                buf[i] = '\0';         // 将'\n'转换为'\0'，便于连接
+                buf[i] = '\0';         // 将'\n'转换为'\0'，标识结束
                 xargv[xargc++] = p;    // 进行连接
                 xargv[xargc++] = '\0'; // 标识结束
                 exec(xargv[0], xargv);
@@ -541,61 +550,6 @@ int main(int argc, char *argv[])
     exit(0);
 }
 ```
-
-```c
-// xargs.c
-
-#include "kernel/types.h"
-#include "kernel/stat.h"
-#include "user/user.h"
-
-int main(int argc, char *argv[])
-{
-    char buf[1024]; // 存储从标准输入流读出字符串
-    char *xargv[16];
-    int xargc = 0;
-    // 将argv的所有参数存储到xargv中，作为后续调用exec使用
-    for (int i = 1; i < argc; i++)
-        xargv[xargc++] = argv[i];
-    char *p = buf; // p指向buf首地址
-    char c;
-    int cnt = 0;
-    while (read(0, &c, sizeof(c)) > 0) // 一次读取一个字符,读多次
-    {
-        if (c == '\n')
-        {
-            int pid = fork();
-            if (pid == 0)
-            {
-                // child process
-                // 将buf的参数加到xargv中
-                xargv[xargc++] = p;    // 进行连接
-                xargv[xargc++] = '\0'; // 标识结束
-                exec(xargv[0], xargv);
-            }
-            else if (pid > 0)
-            {
-                // parent process
-                wait(0);
-                p = buf + cnt + 1; // p指向新的buf位置
-            }
-            else
-            {
-                // fork error
-                fprintf(1, "fork error\n");
-                exit(1);
-            }
-        }
-        else
-        {
-            buf[cnt++] = c; // 将c保存到buf数组
-        }
-    }
-    exit(0);
-}
-```
-
-
 
 ![image-20221111154955231](http://shixiaozhong.oss-cn-hangzhou.aliyuncs.com/img/image-20221111154955231.png)
 
